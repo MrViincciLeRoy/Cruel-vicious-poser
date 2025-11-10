@@ -22,22 +22,29 @@ class MetMuseumAPI:
 
     def __init__(self):
         self.base_url = "https://collectionapi.metmuseum.org/public/collection/v1"
-        self.config_path = Path("config/artists_database.json")
+        # FIX: Look for both possible filenames
+        self.config_path = None
+        for filename in ["config/artists_database.json", "config/artist_database.json"]:
+            if Path(filename).exists():
+                self.config_path = Path(filename)
+                break
+        
         self.search_queries = self._load_search_database()
 
     def _load_search_database(self) -> List[str]:
         """Load artist and movement database"""
         try:
-            if self.config_path.exists():
+            if self.config_path and self.config_path.exists():
                 with open(self.config_path, 'r') as f:
                     data = json.load(f)
                     queries = []
                     queries.extend(data.get('search_queries', []))
                     queries.extend(data.get('movements', []))
                     queries.extend(data.get('themes', []))
+                    print(f"✅ Loaded {len(queries)} search terms from {self.config_path}")
                     return queries
             else:
-                print(f"⚠️ Config file not found: {self.config_path}")
+                print(f"⚠️ Config file not found, using defaults")
                 return self._get_default_queries()
         except Exception as e:
             print(f"⚠️ Error loading config: {e}")
@@ -328,12 +335,20 @@ class FacebookPoster:
     """Post content to Facebook Page"""
 
     def __init__(self):
-        self.access_token = os.getenv('FB_PAGE_ACCESS_TOKEN_2')
+        # FIX: Use only FB_PAGE_ACCESS_TOKEN - simpler approach
+        self.access_token = os.getenv('FB_PAGE_ACCESS_TOKEN')
         self.page_id = os.getenv('FB_PAGE_ID')
         self.graph_api_url = "https://graph.facebook.com/v21.0"
 
-        if not self.access_token or not self.page_id:
-            raise ValueError("Missing Facebook credentials!")
+        if not self.access_token:
+            raise ValueError("❌ Missing FB_PAGE_ACCESS_TOKEN environment variable!")
+        
+        if not self.page_id:
+            raise ValueError("❌ Missing FB_PAGE_ID environment variable!")
+        
+        print(f"✅ Facebook credentials loaded")
+        print(f"   Page ID: {self.page_id}")
+        print(f"   Token: {self.access_token[:20]}...")
 
     def post_photo(self, image_url: str, caption: str) -> Dict:
         """Post photo to Facebook"""
@@ -347,6 +362,7 @@ class FacebookPoster:
         }
 
         try:
+            print(f"📤 Posting to: {endpoint}")
             response = requests.post(endpoint, data=payload, timeout=30)
             response.raise_for_status()
             return response.json()
@@ -356,132 +372,6 @@ class FacebookPoster:
                 print(f"Response: {e.response.text}")
             raise
 
-import requests
-import json
-
-def get_page_access_token(user_access_token):
-    """
-    Convert a User Access Token to a Page Access Token
-    """
-    print("\n🔄 Converting User Token to Page Token...\n")
-
-    # Step 1: Get list of pages you manage
-    url = "https://graph.facebook.com/v21.0/me/accounts"
-    params = {
-        'access_token': user_access_token
-    }
-
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        data = response.json()
-
-        if 'error' in data:
-            print(f"❌ Error: {data['error']['message']}")
-            return None
-
-        if 'data' not in data or len(data['data']) == 0:
-            print("❌ No pages found! Make sure:")
-            print("   1. You're an admin of the page")
-            print("   2. Your token has 'pages_show_list' permission")
-            return None
-
-        # Show all pages
-        print("📄 Pages you manage:\n")
-        for i, page in enumerate(data['data'], 1):
-            print(f"{i}. {page['name']}")
-            print(f"   ID: {page['id']}")
-            print(f"   Category: {page.get('category', 'N/A')}")
-            print(f"   Page Token: {page['access_token'][:50]}...")
-            print()
-
-        # Return the first page's token (or let user choose)
-        if len(data['data']) == 1:
-            page = data['data'][0]
-            print(f"✅ Found your page: {page['name']}")
-            print(f"\n🎯 YOUR PAGE ACCESS TOKEN:")
-            print(f"{page['access_token']}")
-            print(f"\n📋 Page ID: {page['id']}")
-            return page['access_token'], page['id']
-        else:
-            # Multiple pages - let user choose
-            choice = input(f"\nEnter page number (1-{len(data['data'])}): ").strip()
-            try:
-                page = data['data'][int(choice) - 1]
-                print(f"\n✅ Selected: {page['name']}")
-                print(f"\n🎯 YOUR PAGE ACCESS TOKEN:")
-                print(f"{page['access_token']}")
-                print(f"\n📋 Page ID: {page['id']}") 
-                return page['access_token'], page['id']
-            except (ValueError, IndexError):
-                print("❌ Invalid choice")
-                return None
-
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return None
-
-
-
-
-
-def test_page_token(page_token, page_id):
-    """
-    Test if the page token works for posting
-    """
-    print("\n🧪 Testing page token...\n")
-
-    # Try to read page feed
-    url = f"https://graph.facebook.com/v21.0/{page_id}/feed"
-    params = {
-        'access_token': page_token,
-        'limit': 1
-    }
-
-    try:
-        response = requests.get(url, params=params, timeout=10)
-
-        if response.status_code == 200:
-            print("✅ Token works! You can post to this page.")
-            return True
-        else:
-            print(f"❌ Token test failed: {response.status_code}")
-            print(f"Response: {response.text}")
-            return False
-
-    except Exception as e:
-        print(f"❌ Error testing token: {e}")
-        return False
-
-
-def envmain():
-    print("\n" + "="*70)
-    print("🔑 FACEBOOK PAGE ACCESS TOKEN GENERATOR")
-    print("="*70)
-
-    # Get user token
-    print("\n1️⃣ First, paste your USER access token from Graph API Explorer")
-    print("   (The one that starts with EAARE...)")
-    user_token = os.getenv('FB_PAGE_ACCESS_TOKEN') # We can't directly generate page token so we use user token instead to generate the needed token
-
-    if not user_token:
-        print("❌ No token provided")
-        return
-
-    # Get page token
-    result = get_page_access_token(user_token)
-
-    if not result:
-        return
-
-    page_token, page_id = result
-
-    # Test the token
-    test_page_token(page_token, page_id)
-    os.environ['FB_PAGE_ACCESS_TOKEN_2'] = page_token
-    
-    print("\n" + "="*70)
-    print("✅ DONE! Use the token above in your posting script.")
-    print("="*70 + "\n")
 
 def main():
     """Main execution"""
@@ -492,7 +382,6 @@ def main():
 
     try:
         # Initialize components
-        envmain() 
         tracker = PostTracker()
         met = MetMuseumAPI()
         generator = SimplePostGenerator()
