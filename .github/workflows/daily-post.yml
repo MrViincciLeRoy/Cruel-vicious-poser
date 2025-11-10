@@ -29,7 +29,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
+          #pip install --upgrade pip
           pip install requests transformers torch accelerate sentencepiece protobuf
       
       - name: Generate new post if needed
