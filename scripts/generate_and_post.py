@@ -410,7 +410,7 @@ def get_page_access_token(user_access_token):
                 print(f"\n✅ Selected: {page['name']}")
                 print(f"\n🎯 YOUR PAGE ACCESS TOKEN:")
                 print(f"{page['access_token']}")
-                print(f"\n📋 Page ID: {page['id']}" #['FB_PAGE_ACCESS_TOKEN_2'] = page['access_token']
+                print(f"\n📋 Page ID: {page['id']}") 
                 return page['access_token'], page['id']
             except (ValueError, IndexError):
                 print("❌ Invalid choice")
@@ -421,36 +421,7 @@ def get_page_access_token(user_access_token):
         return None
 
 
-def make_token_long_lived(short_token, app_id, app_secret):
-    """
-    Convert a short-lived token to a long-lived one (60 days)
-    """
-    print("\n⏱️ Converting to long-lived token (60 days)...\n")
 
-    url = "https://graph.facebook.com/v21.0/oauth/access_token"
-    params = {
-        'grant_type': 'fb_exchange_token',
-        'client_id': app_id,
-        'client_secret': app_secret,
-        'fb_exchange_token': short_token
-    }
-
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        data = response.json()
-
-        if 'access_token' in data:
-            print("✅ Long-lived token generated!")
-            print(f"\n🎯 LONG-LIVED PAGE TOKEN:")
-            print(f"{data['access_token']}")
-            return data['access_token']
-        else:
-            print(f"⚠️ Could not generate long-lived token: {data}")
-            return None
-
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return None
 
 
 def test_page_token(page_token, page_id):
