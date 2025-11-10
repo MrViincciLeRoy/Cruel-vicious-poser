@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Automated daily art post generator and poster
-Generates one post per day and posts it to Facebook
+AI-Powered automated daily art post generator and poster
+Uses LLM to generate unique, engaging content for each artwork
 """
 
 import requests
@@ -13,16 +13,118 @@ import random
 from datetime import datetime
 from typing import Dict, List, Optional
 from pathlib import Path
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+class ArtLLMGenerator:
+    """Generate art content using local LLM"""
+
+    def __init__(self, model_name: str = "microsoft/Phi-3.5-mini-instruct"):
+        """Initialize the LLM with a smaller, faster model"""
+        print("🤖 Loading AI model...")
+        print(f"   Model: {model_name}")
+
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                model_name,
+                trust_remote_code=True
+            )
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                device_map="auto" if torch.cuda.is_available() else None,
+                trust_remote_code=True
+            )
+
+            if torch.cuda.is_available():
+                print("   ✅ Using GPU acceleration")
+            else:
+                print("   ℹ️  Using CPU")
+
+            print("   ✅ Model loaded successfully!\n")
+
+        except Exception as e:
+            print(f"   ❌ Error loading model: {e}")
+            print("   💡 Falling back to template-based generation")
+            self.model = None
+            self.tokenizer = None
+
+    def generate_text(self, prompt: str, max_tokens: int = 150) -> str:
+        """Generate text using the LLM"""
+        if not self.model or not self.tokenizer:
+            return ""
+
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            
+            inputs = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                return_tensors="pt",
+                return_dict=True
+            ).to(self.model.device)
+
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                temperature=0.7,
+                top_p=0.9,
+                do_sample=True,
+                pad_token_id=self.tokenizer.eos_token_id
+            )
+
+            generated_text = self.tokenizer.decode(
+                outputs[0][inputs["input_ids"].shape[-1]:],
+                skip_special_tokens=True
+            )
+
+            return generated_text.strip()
+
+        except Exception as e:
+            print(f"   ⚠️  Generation error: {e}")
+            return ""
+
+    def generate_artwork_description(self, artwork: Dict) -> str:
+        """Generate engaging description for artwork"""
+        prompt = f"""Write 2-3 engaging sentences about this artwork for social media:
+
+Title: "{artwork['title']}"
+Artist: {artwork['artist']}
+Date: {artwork['date']}
+Medium: {artwork['medium']}
+
+Write in an enthusiastic, accessible tone. Focus on what makes this piece special. No hashtags."""
+
+        return self.generate_text(prompt, max_tokens=120)
+
+    def generate_artist_insight(self, artist_name: str, artwork_title: str) -> str:
+        """Generate interesting facts about the artist"""
+        prompt = f"""Share 1-2 interesting facts about artist {artist_name} and their work "{artwork_title}".
+
+Write conversationally for social media. Make it educational but engaging. No hashtags."""
+
+        return self.generate_text(prompt, max_tokens=120)
+
+    def generate_engagement_question(self, artwork: Dict) -> str:
+        """Generate a question to engage the audience"""
+        prompt = f"""Create ONE short, engaging question about this artwork for social media:
+
+"{artwork['title']}" by {artwork['artist']} ({artwork['date']})
+
+The question should encourage discussion. Keep it conversational. No hashtags."""
+
+        return self.generate_text(prompt, max_tokens=60)
+
 
 class MetMuseumAPI:
     """Interact with The Metropolitan Museum of Art API"""
 
     def __init__(self):
         self.base_url = "https://collectionapi.metmuseum.org/public/collection/v1"
-        # FIX: Look for both possible filenames
         self.config_path = None
         for filename in ["config/artists_database.json", "config/artist_database.json"]:
             if Path(filename).exists():
@@ -41,13 +143,13 @@ class MetMuseumAPI:
                     queries.extend(data.get('search_queries', []))
                     queries.extend(data.get('movements', []))
                     queries.extend(data.get('themes', []))
-                    print(f"✅ Loaded {len(queries)} search terms from {self.config_path}")
+                    print(f"✅ Loaded {len(queries)} search terms")
                     return queries
             else:
-                print(f"⚠️ Config file not found, using defaults")
+                print(f"⚠️  Config file not found, using defaults")
                 return self._get_default_queries()
         except Exception as e:
-            print(f"⚠️ Error loading config: {e}")
+            print(f"⚠️  Error loading config: {e}")
             return self._get_default_queries()
 
     def _get_default_queries(self) -> List[str]:
@@ -65,7 +167,7 @@ class MetMuseumAPI:
             params = {
                 'q': query,
                 'hasImages': 'true',
-                'departmentId': 11  # European Paintings
+                'departmentId': 11
             }
 
             response = requests.get(url, params=params, timeout=15)
@@ -187,10 +289,21 @@ class PostTracker:
             json.dump(posts, f, indent=2)
 
 
-class SimplePostGenerator:
-    """Generate simple engaging posts without LLM"""
+class AIPostGenerator:
+    """Generate AI-powered posts"""
 
-    def __init__(self):
+    def __init__(self, use_ai: bool = True):
+        self.use_ai = use_ai
+        self.llm = None
+        
+        if use_ai:
+            try:
+                self.llm = ArtLLMGenerator()
+            except Exception as e:
+                print(f"⚠️  AI initialization failed: {e}")
+                print("   Falling back to template-based generation")
+                self.use_ai = False
+        
         self.post_templates = [
             'daily_artwork',
             'artist_spotlight',
@@ -203,26 +316,43 @@ class SimplePostGenerator:
         if post_type is None:
             post_type = random.choice(self.post_templates)
 
-        if post_type == 'artist_spotlight':
-            return self._artist_spotlight(artwork)
-        elif post_type == 'technique_focus':
-            return self._technique_focus(artwork)
-        elif post_type == 'period_context':
-            return self._period_context(artwork)
+        if self.use_ai and self.llm:
+            if post_type == 'artist_spotlight':
+                return self._ai_artist_spotlight(artwork)
+            elif post_type == 'technique_focus':
+                return self._ai_technique_focus(artwork)
+            elif post_type == 'period_context':
+                return self._ai_period_context(artwork)
+            else:
+                return self._ai_daily_artwork(artwork)
         else:
-            return self._daily_artwork(artwork)
+            # Fallback to template-based generation
+            if post_type == 'artist_spotlight':
+                return self._template_artist_spotlight(artwork)
+            elif post_type == 'technique_focus':
+                return self._template_technique_focus(artwork)
+            elif post_type == 'period_context':
+                return self._template_period_context(artwork)
+            else:
+                return self._template_daily_artwork(artwork)
 
-    def _daily_artwork(self, artwork: Dict) -> Dict:
-        """Create daily artwork post"""
+    def _ai_daily_artwork(self, artwork: Dict) -> Dict:
+        """AI-generated daily artwork post"""
+        description = self.llm.generate_artwork_description(artwork)
+        question = self.llm.generate_engagement_question(artwork)
+
         post = f"🎨 𝗔𝗿𝘁𝘄𝗼𝗿𝗸 𝗼𝗳 𝘁𝗵𝗲 𝗗𝗮𝘆\n\n"
         post += f'"{artwork["title"]}"\n'
         post += f"by {artwork['artist']}\n"
         post += f"({artwork['date']})\n\n"
         
-        post += f"✨ {self._get_appreciation_line(artwork)}\n\n"
+        if description:
+            post += f"✨ {description}\n\n"
+        
         post += f"🏛️ The Metropolitan Museum of Art\n\n"
         
-        post += f"{self._get_engagement_question(artwork)}\n\n"
+        if question:
+            post += f"{question}\n\n"
         
         post += "#ArtHistory #Painting #FineArt #ClassicalArt #Museum "
         post += "#ArtLovers #ArtAppreciation #DailyArt #MetMuseum"
@@ -232,19 +362,22 @@ class SimplePostGenerator:
             'image_url': artwork['image_url'],
             'link_url': artwork['museum_url'],
             'type': 'daily_artwork',
+            'ai_generated': True,
             'artwork_details': artwork
         }
 
-    def _artist_spotlight(self, artwork: Dict) -> Dict:
-        """Create artist spotlight post"""
+    def _ai_artist_spotlight(self, artwork: Dict) -> Dict:
+        """AI-generated artist spotlight"""
+        insight = self.llm.generate_artist_insight(artwork['artist'], artwork['title'])
+
         post = f"👨‍🎨 𝗔𝗿𝘁𝗶𝘀𝘁 𝗦𝗽𝗼𝘁𝗹𝗶𝗴𝗵𝘁: {artwork['artist']}\n\n"
         
-        post += f"A master of {artwork.get('period', 'their era')}, "
-        post += f"{artwork['artist']} created works that continue to captivate audiences centuries later.\n\n"
+        if insight:
+            post += f"💡 {insight}\n\n"
         
         post += f'Featured work: "{artwork["title"]}" ({artwork["date"]})\n\n'
         post += f"🏛️ Collection: The Metropolitan Museum of Art\n\n"
-        post += f"What draws you to this artist's work? Share your thoughts! 💭\n\n"
+        post += f"What's your favorite work by {artwork['artist']}? Share in the comments! 💭\n\n"
         
         artist_tag = artwork['artist'].replace(' ', '').replace('.', '')
         post += f"#ArtHistory #{artist_tag} #ArtistSpotlight #FineArt #Painting"
@@ -254,22 +387,24 @@ class SimplePostGenerator:
             'image_url': artwork['image_url'],
             'link_url': artwork['museum_url'],
             'type': 'artist_spotlight',
+            'ai_generated': True,
             'artwork_details': artwork
         }
 
-    def _technique_focus(self, artwork: Dict) -> Dict:
-        """Focus on artistic technique"""
+    def _ai_technique_focus(self, artwork: Dict) -> Dict:
+        """AI-generated technique focus"""
+        description = self.llm.generate_artwork_description(artwork)
+
         post = f"🖌️ 𝗧𝗲𝗰𝗵𝗻𝗶𝗾𝘂𝗲 𝗦𝗽𝗼𝘁𝗹𝗶𝗴𝗵𝘁\n\n"
         post += f'"{artwork["title"]}"\n'
         post += f"by {artwork['artist']} ({artwork['date']})\n\n"
-        
         post += f"Medium: {artwork['medium']}\n\n"
-        post += f"Notice the mastery in technique and composition. "
-        post += f"Each brushstroke contributes to the overall impact of the piece.\n\n"
+        
+        if description:
+            post += f"{description}\n\n"
         
         post += f"🏛️ The Metropolitan Museum of Art\n\n"
         post += "What technical aspects catch your eye? 🔍\n\n"
-        
         post += "#ArtTechnique #Painting #FineArt #ArtHistory #Museum"
 
         return {
@@ -277,22 +412,25 @@ class SimplePostGenerator:
             'image_url': artwork['image_url'],
             'link_url': artwork['museum_url'],
             'type': 'technique_focus',
+            'ai_generated': True,
             'artwork_details': artwork
         }
 
-    def _period_context(self, artwork: Dict) -> Dict:
-        """Provide historical context"""
-        period = artwork.get('period', artwork.get('culture', 'this period'))
-        
+    def _ai_period_context(self, artwork: Dict) -> Dict:
+        """AI-generated period context"""
+        description = self.llm.generate_artwork_description(artwork)
+        period = artwork.get('period', artwork.get('culture', ''))
+
         post = f"📖 𝗔𝗿𝘁 𝗛𝗶𝘀𝘁𝗼𝗿𝘆 𝗖𝗼𝗻𝘁𝗲𝘅𝘁\n\n"
+        
         if period:
             post += f"Focus: {period}\n\n"
         
         post += f'"{artwork["title"]}"\n'
         post += f"by {artwork['artist']} ({artwork['date']})\n\n"
         
-        post += f"This work exemplifies the artistic ideals and techniques of its time. "
-        post += f"Understanding the historical context enriches our appreciation of the artwork.\n\n"
+        if description:
+            post += f"{description}\n\n"
         
         post += f"🏛️ The Metropolitan Museum of Art\n\n"
         post += "What elements of the period do you notice? 🎨\n\n"
@@ -305,28 +443,116 @@ class SimplePostGenerator:
             'image_url': artwork['image_url'],
             'link_url': artwork['museum_url'],
             'type': 'period_context',
+            'ai_generated': True,
             'artwork_details': artwork
         }
 
-    def _get_appreciation_line(self, artwork: Dict) -> str:
+    # Template-based fallback methods
+    def _template_daily_artwork(self, artwork: Dict) -> Dict:
+        """Template-based daily artwork post"""
+        post = f"🎨 𝗔𝗿𝘁𝘄𝗼𝗿𝗸 𝗼𝗳 𝘁𝗵𝗲 𝗗𝗮𝘆\n\n"
+        post += f'"{artwork["title"]}"\n'
+        post += f"by {artwork['artist']}\n"
+        post += f"({artwork['date']})\n\n"
+        post += f"✨ {self._get_appreciation_line()}\n\n"
+        post += f"🏛️ The Metropolitan Museum of Art\n\n"
+        post += f"{self._get_engagement_question()}\n\n"
+        post += "#ArtHistory #Painting #FineArt #ClassicalArt #Museum "
+        post += "#ArtLovers #ArtAppreciation #DailyArt #MetMuseum"
+
+        return {
+            'post_text': post,
+            'image_url': artwork['image_url'],
+            'link_url': artwork['museum_url'],
+            'type': 'daily_artwork',
+            'ai_generated': False,
+            'artwork_details': artwork
+        }
+
+    def _template_artist_spotlight(self, artwork: Dict) -> Dict:
+        """Template-based artist spotlight"""
+        post = f"👨‍🎨 𝗔𝗿𝘁𝗶𝘀𝘁 𝗦𝗽𝗼𝘁𝗹𝗶𝗴𝗵𝘁: {artwork['artist']}\n\n"
+        post += f"A master of {artwork.get('period', 'their era')}, "
+        post += f"{artwork['artist']} created works that continue to captivate audiences.\n\n"
+        post += f'Featured work: "{artwork["title"]}" ({artwork["date"]})\n\n'
+        post += f"🏛️ Collection: The Metropolitan Museum of Art\n\n"
+        post += f"What draws you to this artist's work? Share your thoughts! 💭\n\n"
+        artist_tag = artwork['artist'].replace(' ', '').replace('.', '')
+        post += f"#ArtHistory #{artist_tag} #ArtistSpotlight #FineArt #Painting"
+
+        return {
+            'post_text': post,
+            'image_url': artwork['image_url'],
+            'link_url': artwork['museum_url'],
+            'type': 'artist_spotlight',
+            'ai_generated': False,
+            'artwork_details': artwork
+        }
+
+    def _template_technique_focus(self, artwork: Dict) -> Dict:
+        """Template-based technique focus"""
+        post = f"🖌️ 𝗧𝗲𝗰𝗵𝗻𝗶𝗾𝘂𝗲 𝗦𝗽𝗼𝘁𝗹𝗶𝗴𝗵𝘁\n\n"
+        post += f'"{artwork["title"]}"\n'
+        post += f"by {artwork['artist']} ({artwork['date']})\n\n"
+        post += f"Medium: {artwork['medium']}\n\n"
+        post += f"Notice the mastery in technique and composition. "
+        post += f"Each element contributes to the overall impact.\n\n"
+        post += f"🏛️ The Metropolitan Museum of Art\n\n"
+        post += "What technical aspects catch your eye? 🔍\n\n"
+        post += "#ArtTechnique #Painting #FineArt #ArtHistory #Museum"
+
+        return {
+            'post_text': post,
+            'image_url': artwork['image_url'],
+            'link_url': artwork['museum_url'],
+            'type': 'technique_focus',
+            'ai_generated': False,
+            'artwork_details': artwork
+        }
+
+    def _template_period_context(self, artwork: Dict) -> Dict:
+        """Template-based period context"""
+        period = artwork.get('period', artwork.get('culture', ''))
+        post = f"📖 𝗔𝗿𝘁 𝗛𝗶𝘀𝘁𝗼𝗿𝘆 𝗖𝗼𝗻𝘁𝗲𝘅𝘁\n\n"
+        if period:
+            post += f"Focus: {period}\n\n"
+        post += f'"{artwork["title"]}"\n'
+        post += f"by {artwork['artist']} ({artwork['date']})\n\n"
+        post += f"This work exemplifies the artistic ideals of its time. "
+        post += f"Understanding context enriches appreciation.\n\n"
+        post += f"🏛️ The Metropolitan Museum of Art\n\n"
+        post += "What elements of the period do you notice? 🎨\n\n"
+        period_tag = period.replace(' ', '') if period else 'ArtMovement'
+        post += f"#ArtHistory #{period_tag} #FineArt #Museum #Painting"
+
+        return {
+            'post_text': post,
+            'image_url': artwork['image_url'],
+            'link_url': artwork['museum_url'],
+            'type': 'period_context',
+            'ai_generated': False,
+            'artwork_details': artwork
+        }
+
+    def _get_appreciation_line(self) -> str:
         """Generate an appreciation line"""
         lines = [
             "A masterpiece that continues to inspire art lovers worldwide.",
             "The skillful composition and technique make this a timeless work.",
-            "Notice the masterful use of light, color, and form in this piece.",
+            "Notice the masterful use of light, color, and form.",
             "A stunning example of artistic excellence from this period.",
-            "The attention to detail and artistic vision are truly remarkable."
+            "The attention to detail is truly remarkable."
         ]
         return random.choice(lines)
 
-    def _get_engagement_question(self, artwork: Dict) -> str:
+    def _get_engagement_question(self) -> str:
         """Generate an engagement question"""
         questions = [
             "What emotions does this artwork evoke for you?",
-            "What details do you notice first in this painting?",
+            "What details do you notice first?",
             "How would you describe this work to someone who can't see it?",
             "What story do you think this painting tells?",
-            "Which element of this artwork speaks to you most?"
+            "Which element speaks to you most?"
         ]
         return random.choice(questions)
 
@@ -335,7 +561,6 @@ class FacebookPoster:
     """Post content to Facebook Page"""
 
     def __init__(self):
-        # FIX: Use only FB_PAGE_ACCESS_TOKEN - simpler approach
         self.access_token = os.getenv('FB_PAGE_ACCESS_TOKEN')
         self.page_id = os.getenv('FB_PAGE_ID')
         self.graph_api_url = "https://graph.facebook.com/v21.0"
@@ -348,7 +573,6 @@ class FacebookPoster:
         
         print(f"✅ Facebook credentials loaded")
         print(f"   Page ID: {self.page_id}")
-        print(f"   Token: {self.access_token[:20]}...")
 
     def post_photo(self, image_url: str, caption: str) -> Dict:
         """Post photo to Facebook"""
@@ -362,7 +586,6 @@ class FacebookPoster:
         }
 
         try:
-            print(f"📤 Posting to: {endpoint}")
             response = requests.post(endpoint, data=payload, timeout=30)
             response.raise_for_status()
             return response.json()
@@ -376,7 +599,7 @@ class FacebookPoster:
 def main():
     """Main execution"""
     print("\n" + "🤖" * 35)
-    print(f"   AUTOMATED DAILY ART POST")
+    print(f"   AI-POWERED DAILY ART POST")
     print(f"   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("🤖" * 35 + "\n")
 
@@ -384,18 +607,16 @@ def main():
         # Initialize components
         tracker = PostTracker()
         met = MetMuseumAPI()
-        generator = SimplePostGenerator()
+        generator = AIPostGenerator(use_ai=True)  # Set to False to use templates
         poster = FacebookPoster()
 
         # Check if we have queued posts
         queue = tracker.get_post_queue()
-        
-        # Filter out already used posts
         queue = [p for p in queue if not tracker.is_used(p['artwork_details']['object_id'])]
         
         # If queue is low, generate more posts
         if len(queue) < 7:
-            print("📝 Queue is low, generating more posts...\n")
+            print("📝 Queue is low, generating AI-powered posts...\n")
             
             new_posts = []
             attempts = 0
@@ -416,14 +637,17 @@ def main():
                     if not artwork or artwork['artist'] == 'Unknown Artist':
                         continue
                     
+                    print(f"   🎨 Generating for: {artwork['title'][:50]}...")
                     post = generator.generate_post(artwork)
                     new_posts.append(post)
-                    print(f"✅ Generated post for: {artwork['title'][:50]}")
+                    
+                    ai_status = "🤖 AI" if post.get('ai_generated') else "📝 Template"
+                    print(f"   ✅ {ai_status} - {post['type']}")
                     
                     if len(new_posts) >= 14:
                         break
                     
-                    time.sleep(1)
+                    time.sleep(2)  # Give AI time to generate
                 
                 attempts += 1
             
@@ -444,7 +668,9 @@ def main():
         print("=" * 70)
         print(f"Title: {artwork['title']}")
         print(f"Artist: {artwork['artist']}")
-        print(f"Date: {artwork['date']}")
+        print(f"Type: {today_post['type']}")
+        ai_status = "🤖 AI-Generated" if today_post.get('ai_generated') else "📝 Template"
+        print(f"Content: {ai_status}")
         print()
 
         # Post to Facebook
@@ -474,7 +700,7 @@ def main():
 
         print(f"\n📊 Queue remaining: {len(queue)} posts")
         print("\n" + "✨" * 35)
-        print("🎉 DAILY POST COMPLETE!")
+        print("🎉 AI-POWERED DAILY POST COMPLETE!")
         print("✨" * 35 + "\n")
 
     except Exception as e:
