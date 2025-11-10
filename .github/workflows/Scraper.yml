@@ -1,13 +1,6 @@
-name: Daily Art Post
+name: Scrape Art Data
 
 on:
-  schedule:
-    # Run at 8:00 AM in SA every day (adjust timezone as needed)
-    - cron: '0 6 * * *'
-    # Run at 11:00 AM in SA every day (adjust timezone as needed)
-    - cron: '0 9 * * *'
-    # Run at 8:00 MP in SA every day (adjust timezone as needed)
-    - cron: '0 20 * * *'
   
   # Allow manual trigger for testing
   workflow_dispatch:
