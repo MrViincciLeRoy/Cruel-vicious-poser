@@ -526,6 +526,6 @@ if __name__ == "__main__":
     # Option 1: Interactive menu
     #interactive_menu()
     
-    Option 2: Direct scraping (uncomment to use)
+    # Option 2: Direct scraping (uncomment to use)
     scraper = WikidataArtistScraper()
     scraper.scrape_all()
