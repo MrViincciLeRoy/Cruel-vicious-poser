@@ -132,5 +132,10 @@
     "animal painting",
     "flower painting",
     "interior scene"
-  ]
+  ], 
+  'metadata': {
+                'last_updated': 0,
+                'total_artists': 0,
+                'total_movements': 0,
+                'sources': ['wikidata']
 }
